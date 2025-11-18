@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Seasonal Snow Profile Plot</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      background: #f5f5f5;
+    }
+
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      padding: 16px;
+      gap: 16px;
+    }
+
+    .plot-container {
+      flex: 2 1 600px;
+      background: #ffffff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .controls-container {
+      flex: 1 1 320px;
+      background: #ffffff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      max-width: 420px;
+    }
+
+    h2, h3 {
+      margin-top: 0;
+    }
+
+    label {
+      display: block;
+      margin-top: 8px;
+      font-size: 0.9rem;
+    }
+
+    input[type="number"],
+    input[type="date"],
+    input[type="text"],
+    select {
+      width: 100%;
+      padding: 4px 6px;
+      margin-top: 2px;
+      font-size: 0.9rem;
+      box-sizing: border-box;
+    }
+
+    .layers-header {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 2fr auto;
+      gap: 4px;
+      margin-top: 8px;
+      font-size: 0.85rem;
+      font-weight: bold;
+    }
+
+    .layer-row {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 2fr auto;
+      gap: 4px;
+      margin-top: 4px;
+      align-items: center;
+    }
+
+    .layer-row input[type="number"] {
+      width: 100%;
+    }
+
+    button {
+      padding: 4px 8px;
+      margin-top: 8px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    .small-button {
+      padding: 2px 6px;
+      font-size: 0.8rem;
+    }
+
+    .buttons-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    #plot {
+      width: 100%;
+      height: 500px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #ffffff;
+    }
+
+    .hint {
+      font-size: 0.8rem;
+      color: #555;
+      margin-top: 4px;
+    }
+
+    .profiles-summary {
+      margin-top: 10px;
+      font-size: 0.85rem;
+      max-height: 200px;
+      overflow-y: auto;
+      border-top: 1px solid #eee;
+      padding-top: 6px;
+    }
+
+    .profiles-summary ul {
+      padding-left: 18px;
+      margin: 4px 0;
+    }
+
+    .profiles-summary li {
+      margin-bottom: 4px;
+    }
+
+    .profiles-summary .small-button {
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="plot-container">
+    <h2>Seasonal Snow Profiles</h2>
+    <p style="font-size:0.9rem;">
+      X-axis: 1 December – 31 May (fixed). Y-axis: snow depth (cm), 0 to your chosen maximum.
+      Hover over bars to see layer comments. Grain type code is shown on each layer.
+    </p>
+    <svg id="plot"></svg>
+  </div>
+
+  <div class="controls-container">
+    <h3>Profile Console</h3>
+
+    <label for="maxDepth">
+      Maximum snow depth on y-axis (cm):
+    </label>
+    <input type="number" id="maxDepth" min="10" value="300" step="10">
+
+    <label for="profileDate">
+      Date for profile
+      <span class="hint">(any year, but must be between 1 Dec and 31 May by month/day)</span>
+    </label>
+    <input type="date" id="profileDate">
+
+    <div id="layersSection">
+      <label>Layers (top layer at the top in this list):</label>
+
+      <button id="addLayerBtn" type="button">+ Add layer</button>
+
+      <div class="layers-header">
+        <div>Type</div>
+        <div>Thickness (cm)</div>
+        <div>Comment (tooltip)</div>
+        <div></div>
+      </div>
+
+      <div id="layersContainer"></div>
+    </div>
+
+    <div class="buttons-row">
+      <button id="addProfileBtn" type="button">Add profile to plot</button>
+      <button id="clearProfilesBtn" type="button">Clear all profiles</button>
+    </div>
+
+    <hr>
+
+    <h3>Save / Load</h3>
+
+    <div class="buttons-row">
+      <button id="downloadBtn" type="button">Download text file</button>
+      <label style="margin-top:0;">
+        <span class="hint">Load previously saved text file:</span>
+        <input type="file" id="fileInput" accept=".txt,.json">
+      </label>
+    </div>
+
+    <div class="profiles-summary" id="profilesSummary">
+      <strong>Current profiles:</strong>
+      <div id="profilesSummaryContent"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Basic SVG helper
+  function createSVGElement(tag) {
+    return document.createElementNS("http://www.w3.org/2000/svg", tag);
+  }
+
+  // Season reference: 1 Dec (year 2000) – 31 May (year 2001)
+  const dayMs = 24 * 60 * 60 * 1000;
+  const seasonStart = new Date(2000, 11, 1); // Dec 1, 2000
+  const seasonEnd   = new Date(2001, 4, 31); // May 31, 2001
+  const totalDays   = (seasonEnd - seasonStart) / dayMs;
+
+  // Layer colors by type (your scheme)
+  const layerColors = {
+    "SH":   "#ff0000",  // Surface hoar
+    "DH":   "#0078ff",  // Depth hoar
+    "PP":   "#ffde00",  // Precipitation particles
+    "DF":   "#f1f501",  // Decomposing and fragmented particles
+    "RG":   "#ffccd9",  // Rounded grains
+    "FCxr": "#dacef4",  // Rounding faceted particles
+    "FC":   "#b2edff",  // Faceted crystals
+    "MF":   "#d5ebb5",  // Melt forms
+    "MFcr": "#addd8e",  // Melt-freeze crust
+    "IF":   "#a3ddbb",  // Ice formations
+    "RGxf": "#ffccd9",  // Rounded grains strongly bonded (same as RG)
+    "OTHER": "#cccccc"  // Fallback
+  };
+
+  let profiles = []; // {dateStr, layers:[{type, thickness, comment}], totalDepth}
+
+  const svg = document.getElementById('plot');
+  const maxDepthInput = document.getElementById('maxDepth');
+  const profileDateInput = document.getElementById('profileDate');
+  const layersContainer = document.getElementById('layersContainer');
+  const addLayerBtn = document.getElementById('addLayerBtn');
+  const addProfileBtn = document.getElementById('addProfileBtn');
+  const clearProfilesBtn = document.getElementById('clearProfilesBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const fileInput = document.getElementById('fileInput');
+  const profilesSummaryContent = document.getElementById('profilesSummaryContent');
+
+  // --- Date helpers ---
+
+  function isDateInSeason(date) {
+    const m = date.getMonth(); // 0-11
+    const d = date.getDate();
+    // Dec (11) from 1st, and Jan (0) to May (4) any day
+    return ((m === 11 && d >= 1) || (m >= 0 && m <= 4));
+  }
+
+  function getSeasonDayIndex(date) {
+    const m = date.getMonth();
+    const d = date.getDate();
+    const y = (m >= 11) ? 2000 : 2001; // Dec in year 2000, Jan–May in 2001
+    const mapped = new Date(y, m, d);
+    return (mapped - seasonStart) / dayMs;
+  }
+
+  function formatDateShort(dateStr) {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d)) return dateStr;
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = d.getMonth() + 1;
+    const monthStr = String(month).padStart(2, "0");
+    return `${day}.${monthStr}.`;
+  }
+
+  // --- Layers UI ---
+
+  function createLayerRow(type = "PP", thickness = "", comment = "") {
+    const row = document.createElement('div');
+    row.className = 'layer-row';
+
+    const select = document.createElement('select');
+    select.className = 'layer-type';
+
+    const types = [
+      "PP",
+      "DF",
+      "DH",
+      "SH",
+      "RG",
+      "RGxf",
+      "FC",
+      "FCxr",
+      "MF",
+      "MFcr",
+      "IF",
+      "OTHER"
+    ];
+
+    types.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      if (t === type) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    const thicknessInput = document.createElement('input');
+    thicknessInput.type = 'number';
+    thicknessInput.className = 'layer-thickness';
+    thicknessInput.min = '0';
+    thicknessInput.step = '1';
+    thicknessInput.value = thickness;
+
+    const commentInput = document.createElement('input');
+    commentInput.type = 'text';
+    commentInput.className = 'layer-comment';
+    commentInput.value = comment;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = 'x';
+    removeBtn.className = 'small-button';
+    removeBtn.onclick = () => {
+      if (layersContainer.children.length > 1) {
+        row.remove();
+      }
+    };
+
+    row.appendChild(select);
+    row.appendChild(thicknessInput);
+    row.appendChild(commentInput);
+    row.appendChild(removeBtn);
+
+    return row;
+  }
+
+  function initLayersUI() {
+    layersContainer.innerHTML = "";
+    layersContainer.appendChild(createLayerRow());
+  }
+
+  // Add new layers at the TOP of the list
+  addLayerBtn.addEventListener('click', () => {
+    const newRow = createLayerRow();
+    if (layersContainer.firstChild) {
+      layersContainer.insertBefore(newRow, layersContainer.firstChild);
+    } else {
+      layersContainer.appendChild(newRow);
+    }
+  });
+
+  // --- Plotting ---
+
+  function drawPlot() {
+    // Clear SVG
+    while (svg.firstChild) {
+      svg.removeChild(svg.firstChild);
+    }
+
+    const maxDepth = parseFloat(maxDepthInput.value) || 0;
+    if (maxDepth <= 0) return;
+
+    const width = svg.clientWidth || svg.getBoundingClientRect().width || 800;
+    const height = svg.clientHeight || svg.getBoundingClientRect().height || 500;
+
+    const margin = { top: 20, right: 20, bottom: 50, left: 60 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+    // Axes
+    const axisGroup = createSVGElement('g');
+    svg.appendChild(axisGroup);
+
+    // X-axis line
+    const xAxis = createSVGElement('line');
+    xAxis.setAttribute('x1', margin.left);
+    xAxis.setAttribute('y1', height - margin.bottom);
+    xAxis.setAttribute('x2', width - margin.right);
+    xAxis.setAttribute('y2', height - margin.bottom);
+    xAxis.setAttribute('stroke', '#000');
+    xAxis.setAttribute('stroke-width', '1');
+    axisGroup.appendChild(xAxis);
+
+    // Y-axis line
+    const yAxis = createSVGElement('line');
+    yAxis.setAttribute('x1', margin.left);
+    yAxis.setAttribute('y1', margin.top);
+    yAxis.setAttribute('x2', margin.left);
+    yAxis.setAttribute('y2', height - margin.bottom);
+    yAxis.setAttribute('stroke', '#000');
+    yAxis.setAttribute('stroke-width', '1');
+    axisGroup.appendChild(yAxis);
+
+    // Y-axis ticks (0, 1/4, 1/2, 3/4, max)
+    const yTickGroup = createSVGElement('g');
+    axisGroup.appendChild(yTickGroup);
+    const yScale = plotHeight / maxDepth;
+
+    const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => f * maxDepth);
+    yTicks.forEach(val => {
+      const y = height - margin.bottom - val * yScale;
+      const line = createSVGElement('line');
+      line.setAttribute('x1', margin.left - 5);
+      line.setAttribute('y1', y);
+      line.setAttribute('x2', margin.left);
+      line.setAttribute('y2', y);
+      line.setAttribute('stroke', '#000');
+      line.setAttribute('stroke-width', '1');
+      yTickGroup.appendChild(line);
+
+      const text = createSVGElement('text');
+      text.setAttribute('x', margin.left - 8);
+      text.setAttribute('y', y + 4);
+      text.setAttribute('text-anchor', 'end');
+      text.setAttribute('font-size', '10');
+      text.textContent = Math.round(val);
+      yTickGroup.appendChild(text);
+    });
+
+    // Y-axis label
+    const yLabel = createSVGElement('text');
+    yLabel.setAttribute('x', 15);
+    yLabel.setAttribute('y', margin.top + plotHeight / 2);
+    yLabel.setAttribute('text-anchor', 'middle');
+    yLabel.setAttribute('font-size', '12');
+    yLabel.setAttribute('transform', `rotate(-90 15 ${margin.top + plotHeight / 2})`);
+    yLabel.textContent = 'Snow depth (cm)';
+    axisGroup.appendChild(yLabel);
+
+    // X-axis label
+    const xLabel = createSVGElement('text');
+    xLabel.setAttribute('x', margin.left + plotWidth / 2);
+    xLabel.setAttribute('y', height - 10);
+    xLabel.setAttribute('text-anchor', 'middle');
+    xLabel.setAttribute('font-size', '12');
+    xLabel.textContent = 'Date (1 Dec – 31 May)';
+    axisGroup.appendChild(xLabel);
+
+    // X-axis month ticks and labels
+    const xTickGroup = createSVGElement('g');
+    axisGroup.appendChild(xTickGroup);
+
+    const monthLabels = [
+      { label: 'Dec', m: 11, d: 1 },
+      { label: 'Jan', m: 0, d: 1 },
+      { label: 'Feb', m: 1, d: 1 },
+      { label: 'Mar', m: 2, d: 1 },
+      { label: 'Apr', m: 3, d: 1 },
+      { label: 'May', m: 4, d: 1 }
+    ];
+
+    monthLabels.forEach(ml => {
+      const y = (ml.m >= 11) ? 2000 : 2001;
+      const date = new Date(y, ml.m, ml.d);
+      const index = (date - seasonStart) / dayMs;
+      const x = margin.left + (index / totalDays) * plotWidth;
+
+      const tick = createSVGElement('line');
+      tick.setAttribute('x1', x);
+      tick.setAttribute('y1', height - margin.bottom);
+      tick.setAttribute('x2', x);
+      tick.setAttribute('y2', height - margin.bottom + 5);
+      tick.setAttribute('stroke', '#000');
+      tick.setAttribute('stroke-width', '1');
+      xTickGroup.appendChild(tick);
+
+      const text = createSVGElement('text');
+      text.setAttribute('x', x);
+      text.setAttribute('y', height - margin.bottom + 18);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-size', '10');
+      text.textContent = ml.label;
+      xTickGroup.appendChild(text);
+    });
+
+    // Profiles (stacked bars)
+    const barGroup = createSVGElement('g');
+    svg.appendChild(barGroup);
+
+    // Bars 3× wider than the original
+    const barWidthBase = Math.max(8, plotWidth / 180 * 0.7);
+    const barWidth = barWidthBase * 3;
+
+    profiles.forEach(profile => {
+      const date = new Date(profile.dateStr);
+      if (isNaN(date)) return;
+
+      const dayIndex = getSeasonDayIndex(date);
+      const xCenter = margin.left + (dayIndex / totalDays) * plotWidth;
+
+      let currentBottomY = height - margin.bottom; // starts at surface (0 cm)
+
+      // Flip order so bottom in plot = last row in UI
+      const layersForDrawing = profile.layers.slice().reverse();
+
+      layersForDrawing.forEach(layer => {
+        const thickness = parseFloat(layer.thickness);
+        if (!thickness || thickness <= 0) return;
+
+        const layerHeight = thickness * yScale;
+        const yTop = currentBottomY - layerHeight;
+
+        const rect = createSVGElement('rect');
+        rect.setAttribute('x', xCenter - barWidth / 2);
+        rect.setAttribute('y', yTop);
+        rect.setAttribute('width', barWidth);
+        rect.setAttribute('height', layerHeight);
+        rect.setAttribute('stroke', '#333');
+        rect.setAttribute('stroke-width', '0.5');
+
+        const fillColor = layerColors[layer.type] || layerColors["OTHER"];
+        rect.setAttribute('fill', fillColor);
+
+        const title = createSVGElement('title');
+        const dateShort = formatDateShort(profile.dateStr);
+        let titleText = `Date: ${dateShort}\nLayer: ${layer.type}\nThickness: ${thickness} cm`;
+        if (layer.comment && layer.comment.trim() !== "") {
+          titleText += `\nComment: ${layer.comment.trim()}`;
+        }
+        title.textContent = titleText;
+        rect.appendChild(title);
+
+        barGroup.appendChild(rect);
+
+        // Add text label (grain type) in the middle of the layer
+        const text = createSVGElement('text');
+        text.setAttribute('x', xCenter);
+        text.setAttribute('y', yTop + layerHeight / 2 + 3); // center vertically
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('font-size', '9');
+        text.setAttribute('fill', '#000');
+        text.textContent = layer.type;
+        barGroup.appendChild(text);
+
+        currentBottomY = yTop;
+      });
+    });
+
+    updateProfilesSummary();
+  }
+
+  function updateProfilesSummary() {
+    if (!profiles.length) {
+      profilesSummaryContent.innerHTML = "<em>No profiles added.</em>";
+      return;
+    }
+    const ul = document.createElement('ul');
+    profiles.forEach((p, idx) => {
+      const li = document.createElement('li');
+      const dateShort = formatDateShort(p.dateStr);
+      li.textContent = `${dateShort} – ${p.layers.length} layer(s), total ~${Math.round(p.totalDepth)} cm`;
+
+      // Delete button for this specific profile
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = 'Delete';
+      delBtn.className = 'small-button';
+      delBtn.addEventListener('click', () => {
+        const ok = confirm(`Delete profile for ${dateShort}?`);
+        if (!ok) return;
+        profiles.splice(idx, 1);
+        drawPlot();
+      });
+
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+    });
+    profilesSummaryContent.innerHTML = "";
+    profilesSummaryContent.appendChild(ul);
+  }
+
+  // --- Add profile logic ---
+
+  addProfileBtn.addEventListener('click', () => {
+    const dateStr = profileDateInput.value;
+    if (!dateStr) {
+      alert("Please choose a date for the profile.");
+      return;
+    }
+    const date = new Date(dateStr);
+    if (isNaN(date)) {
+      alert("Invalid date.");
+      return;
+    }
+    if (!isDateInSeason(date)) {
+      alert("Date must be between 1 December and 31 May (by month/day).");
+      return;
+    }
+
+    const layerRows = layersContainer.querySelectorAll('.layer-row');
+    const layers = [];
+    layerRows.forEach(row => {
+      const type = row.querySelector('.layer-type').value;
+      const thicknessVal = row.querySelector('.layer-thickness').value;
+      const comment = row.querySelector('.layer-comment').value || "";
+      const thickness = parseFloat(thicknessVal);
+      if (!isNaN(thickness) && thickness > 0) {
+        // Store in the same order as UI (top first)
+        layers.push({ type, thickness, comment });
+      }
+    });
+
+    if (!layers.length) {
+      alert("Please define at least one layer with positive thickness.");
+      return;
+    }
+
+    const totalDepth = layers.reduce((sum, l) => sum + parseFloat(l.thickness || 0), 0);
+    const maxDepth = parseFloat(maxDepthInput.value) || 0;
+    if (maxDepth > 0 && totalDepth > maxDepth) {
+      const proceed = confirm(
+        `Total profile depth (${Math.round(totalDepth)} cm) exceeds current max depth (${maxDepth} cm).\n` +
+        `It will still be plotted, but some parts may be outside the y-axis. Continue?`
+      );
+      if (!proceed) return;
+    }
+
+    profiles.push({
+      dateStr,
+      layers,
+      totalDepth
+    });
+
+    drawPlot();
+  });
+
+  // --- Clear profiles ---
+
+  clearProfilesBtn.addEventListener('click', () => {
+    const ok = confirm("Remove all profiles from the plot?");
+    if (!ok) return;
+    profiles = [];
+    drawPlot();
+  });
+
+  // --- Download / Upload ---
+
+  downloadBtn.addEventListener('click', () => {
+    const maxDepth = parseFloat(maxDepthInput.value) || 0;
+    const data = {
+      maxDepth,
+      profiles
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "snow_profiles.txt";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target.result;
+        const data = JSON.parse(text);
+        if (data.maxDepth) {
+          maxDepthInput.value = data.maxDepth;
+        }
+        if (Array.isArray(data.profiles)) {
+          profiles = data.profiles;
+        } else {
+          profiles = [];
+        }
+        drawPlot();
+      } catch (err) {
+        alert("Could not parse file. Make sure it's a file previously saved from this tool.");
+        console.error(err);
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  // Redraw when max depth changes
+  maxDepthInput.addEventListener('change', drawPlot);
+
+  // Init
+  window.addEventListener('load', () => {
+    initLayersUI();
+    drawPlot();
+  });
+</script>
+
+</body>
+</html>
