@@ -59,16 +59,17 @@
 
     .layers-header {
       display: grid;
-      grid-template-columns: 1.2fr 1fr 2fr auto;
+      grid-template-columns: 0.7fr 1.2fr 1fr 2fr auto; /* Critical + Type + Thickness + Comment + Remove */
       gap: 4px;
       margin-top: 8px;
       font-size: 0.85rem;
       font-weight: bold;
+      align-items: center;
     }
 
     .layer-row {
       display: grid;
-      grid-template-columns: 1.2fr 1fr 2fr auto;
+      grid-template-columns: 0.7fr 1.2fr 1fr 2fr auto;
       gap: 4px;
       margin-top: 4px;
       align-items: center;
@@ -142,6 +143,7 @@
     <p style="font-size:0.9rem;">
       X-axis: 1 December – 31 May (fixed). Y-axis: snow depth (cm), 0 to your chosen maximum.
       Hover over bars to see layer comments. Grain type code is shown on each layer.
+      Critical layer is outlined in red.
     </p>
     <svg id="plot"></svg>
   </div>
@@ -166,6 +168,7 @@
       <button id="addLayerBtn" type="button">+ Add layer</button>
 
       <div class="layers-header">
+        <div>Critical</div>
         <div>Type</div>
         <div>Thickness (cm)</div>
         <div>Comment (tooltip)</div>
@@ -211,7 +214,7 @@
   const seasonEnd   = new Date(2001, 4, 31); // May 31, 2001
   const totalDays   = (seasonEnd - seasonStart) / dayMs;
 
-  // Layer colors by type (your scheme)
+  // Layer colors by type
   const layerColors = {
     "SH":   "#ff0000",  // Surface hoar
     "DH":   "#0078ff",  // Depth hoar
@@ -227,7 +230,7 @@
     "OTHER": "#cccccc"  // Fallback
   };
 
-  let profiles = []; // {dateStr, layers:[{type, thickness, comment}], totalDepth}
+  let profiles = []; // {dateStr, layers:[{type, thickness, comment, critical}], totalDepth}
 
   const svg = document.getElementById('plot');
   const maxDepthInput = document.getElementById('maxDepth');
@@ -245,7 +248,6 @@
   function isDateInSeason(date) {
     const m = date.getMonth(); // 0-11
     const d = date.getDate();
-    // Dec (11) from 1st, and Jan (0) to May (4) any day
     return ((m === 11 && d >= 1) || (m >= 0 && m <= 4));
   }
 
@@ -272,6 +274,13 @@
   function createLayerRow(type = "PP", thickness = "", comment = "") {
     const row = document.createElement('div');
     row.className = 'layer-row';
+
+    // Critical marker (radio)
+    const criticalInput = document.createElement('input');
+    criticalInput.type = 'radio';
+    criticalInput.className = 'layer-critical';
+    criticalInput.name = 'criticalLayer';
+    criticalInput.title = 'Mark as most critical layer';
 
     const select = document.createElement('select');
     select.className = 'layer-type';
@@ -321,6 +330,7 @@
       }
     };
 
+    row.appendChild(criticalInput);
     row.appendChild(select);
     row.appendChild(thicknessInput);
     row.appendChild(commentInput);
@@ -347,7 +357,6 @@
   // --- Plotting ---
 
   function drawPlot() {
-    // Clear SVG
     while (svg.firstChild) {
       svg.removeChild(svg.firstChild);
     }
@@ -364,11 +373,10 @@
 
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-    // Axes
     const axisGroup = createSVGElement('g');
     svg.appendChild(axisGroup);
 
-    // X-axis line
+    // X-axis
     const xAxis = createSVGElement('line');
     xAxis.setAttribute('x1', margin.left);
     xAxis.setAttribute('y1', height - margin.bottom);
@@ -378,7 +386,7 @@
     xAxis.setAttribute('stroke-width', '1');
     axisGroup.appendChild(xAxis);
 
-    // Y-axis line
+    // Y-axis
     const yAxis = createSVGElement('line');
     yAxis.setAttribute('x1', margin.left);
     yAxis.setAttribute('y1', margin.top);
@@ -388,7 +396,7 @@
     yAxis.setAttribute('stroke-width', '1');
     axisGroup.appendChild(yAxis);
 
-    // Y-axis ticks (0, 1/4, 1/2, 3/4, max)
+    // Y ticks
     const yTickGroup = createSVGElement('g');
     axisGroup.appendChild(yTickGroup);
     const yScale = plotHeight / maxDepth;
@@ -414,7 +422,7 @@
       yTickGroup.appendChild(text);
     });
 
-    // Y-axis label
+    // Y label
     const yLabel = createSVGElement('text');
     yLabel.setAttribute('x', 15);
     yLabel.setAttribute('y', margin.top + plotHeight / 2);
@@ -424,7 +432,7 @@
     yLabel.textContent = 'Snow depth (cm)';
     axisGroup.appendChild(yLabel);
 
-    // X-axis label
+    // X label
     const xLabel = createSVGElement('text');
     xLabel.setAttribute('x', margin.left + plotWidth / 2);
     xLabel.setAttribute('y', height - 10);
@@ -433,7 +441,7 @@
     xLabel.textContent = 'Date (1 Dec – 31 May)';
     axisGroup.appendChild(xLabel);
 
-    // X-axis month ticks and labels
+    // X ticks (months)
     const xTickGroup = createSVGElement('g');
     axisGroup.appendChild(xTickGroup);
 
@@ -470,11 +478,9 @@
       xTickGroup.appendChild(text);
     });
 
-    // Profiles (stacked bars)
     const barGroup = createSVGElement('g');
     svg.appendChild(barGroup);
 
-    // Bars 3× wider than the original
     const barWidthBase = Math.max(8, plotWidth / 180 * 0.7);
     const barWidth = barWidthBase * 3;
 
@@ -485,9 +491,8 @@
       const dayIndex = getSeasonDayIndex(date);
       const xCenter = margin.left + (dayIndex / totalDays) * plotWidth;
 
-      let currentBottomY = height - margin.bottom; // starts at surface (0 cm)
+      let currentBottomY = height - margin.bottom;
 
-      // Flip order so bottom in plot = last row in UI
       const layersForDrawing = profile.layers.slice().reverse();
 
       layersForDrawing.forEach(layer => {
@@ -502,8 +507,10 @@
         rect.setAttribute('y', yTop);
         rect.setAttribute('width', barWidth);
         rect.setAttribute('height', layerHeight);
-        rect.setAttribute('stroke', '#333');
-        rect.setAttribute('stroke-width', '0.5');
+
+        const isCritical = !!layer.critical;
+        rect.setAttribute('stroke', isCritical ? '#ff0000' : '#333');
+        rect.setAttribute('stroke-width', isCritical ? '2' : '0.5');
 
         const fillColor = layerColors[layer.type] || layerColors["OTHER"];
         rect.setAttribute('fill', fillColor);
@@ -514,15 +521,17 @@
         if (layer.comment && layer.comment.trim() !== "") {
           titleText += `\nComment: ${layer.comment.trim()}`;
         }
+        if (isCritical) {
+          titleText += `\n[CRITICAL LAYER]`;
+        }
         title.textContent = titleText;
         rect.appendChild(title);
 
         barGroup.appendChild(rect);
 
-        // Add text label (grain type) in the middle of the layer
         const text = createSVGElement('text');
         text.setAttribute('x', xCenter);
-        text.setAttribute('y', yTop + layerHeight / 2 + 3); // center vertically
+        text.setAttribute('y', yTop + layerHeight / 2 + 3);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('font-size', '9');
         text.setAttribute('fill', '#000');
@@ -547,7 +556,6 @@
       const dateShort = formatDateShort(p.dateStr);
       li.textContent = `${dateShort} – ${p.layers.length} layer(s), total ~${Math.round(p.totalDepth)} cm`;
 
-      // Delete button for this specific profile
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
       delBtn.textContent = 'Delete';
@@ -591,9 +599,9 @@
       const thicknessVal = row.querySelector('.layer-thickness').value;
       const comment = row.querySelector('.layer-comment').value || "";
       const thickness = parseFloat(thicknessVal);
+      const critical = row.querySelector('.layer-critical').checked;
       if (!isNaN(thickness) && thickness > 0) {
-        // Store in the same order as UI (top first)
-        layers.push({ type, thickness, comment });
+        layers.push({ type, thickness, comment, critical });
       }
     });
 
@@ -674,10 +682,8 @@
     reader.readAsText(file);
   });
 
-  // Redraw when max depth changes
   maxDepthInput.addEventListener('change', drawPlot);
 
-  // Init
   window.addEventListener('load', () => {
     initLayersUI();
     drawPlot();
